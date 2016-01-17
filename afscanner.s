@@ -1,7 +1,8 @@
 ********************************
 *
 * Address Field Scanner
-* 1/16/2016
+*
+* 1/16/2016: Version 1
 *
 * This is a simple Disk II scanner
 * to identify address field contents
@@ -80,7 +81,7 @@ MAIN           JSR   $C300      ; Assuming 80 columns
                JSR   PRINT
                DFB   _CLS
                DFB   _INVERSE
-               ASC   " Address Field Scanner "
+               ASC   " Address Field Scanner 1.0 "
                DFB   _NORMAL
                DFB   23,$8D     ; repeat 8D 23x
                DFB   _INVERSE
