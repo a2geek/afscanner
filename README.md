@@ -11,7 +11,7 @@ This application is my lame attempt to understand the old Apple Disk II interfac
 
 ### Windows
 
-> Please note that this mixes the Cygin Unix-y path flavor with the Windows path flavor.  Java (as it is a Windows application) requires Windows pathing instead of Unix pathing.  See the `Makefile` configuration.
+> Please note that this mixes the Cygin Unix-y path flavor with the Windows path flavor.  Java (as it is a Windows application) requires Windows pathing instead of Unix pathing.  See the `Makefile` configuration section.
 
 * Cygwin 64-bit
 ** git
