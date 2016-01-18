@@ -9,6 +9,9 @@
 *
 ********************************
 
+	ORG $2000
+	TYP SYS
+
                XC               ; enable 65C02
 
 * Constants:
@@ -81,7 +84,7 @@ MAIN           JSR   $C300      ; Assuming 80 columns
                JSR   PRINT
                DFB   _CLS
                DFB   _INVERSE
-               ASC   " Address Field Scanner 1.0 "
+               ASC   " Address Field Scanner 2.0beta "
                DFB   _NORMAL
                DFB   23,$8D     ; repeat 8D 23x
                DFB   _INVERSE
