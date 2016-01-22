@@ -61,6 +61,11 @@ CTRLU          =     "U"-$40
 RARROW         =     CTRLU
 ESC            =     $9B
 
+* ProDOS:
+
+PRODOSMLI      =     $BF00
+_MLIQUIT       =     $65
+
 * ROM routines:
 
 DELAY          =     $FCA8
@@ -232,8 +237,10 @@ GOTOTRK        JSR   CLRSCRN
                BCS   RESCAN
                BCC   REPOSN
 
-QUIT           LDA   #_CLREOL
-               JMP   COUT
+QUIT           JSR   PRODOSMLI
+               DFB   _MLIQUIT
+               DA    QUITPARM
+               JMP   MAIN		; should never be executed
 
 READERR        LDA   MOTOROFF,X
                JSR   PRINT
@@ -408,3 +415,10 @@ ARMTABLE       HEX   0204
                HEX   0600
                HEX   0604
                HEX   0200
+
+* ProDOS QUIT parameter tables
+QUITPARM       DFB   4			; 4 parameters
+               DFB   0			; 0 is the only quit type
+               DA    0			; reserved
+               DFB   0			; reserved
+               DA    0			; reserved
