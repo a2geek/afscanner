@@ -2,7 +2,10 @@
 *
 * Address Field Scanner
 *
-* 1/16/2016: Version 1
+* 1/16/2016: Version 1.0
+*
+* 1/16/2016: Version 2.0
+* 
 *
 * This is a simple Disk II scanner
 * to identify address field contents
@@ -43,9 +46,12 @@ PTR2           DA    0          ; secondary print pointer
 SLOT16         DFB   0          ; slot# * 16
 COUNTER        DA    0          ; fail counter
 TEMP           DFB   0          ; local variable
-               DEND 
+DATA					 DA    0          ; data buffer
+               DEND
 
-BUF            =     $280
+DATASTART	   =	   $4000
+DATAEND		   =	   $6000
+DATALEN        =       DATAEND-DATASTART
 
 * High ASCII constants
 
@@ -60,7 +66,7 @@ ESC            =     $9B
 DELAY          =     $FCA8
 GETCH          =     $FD0C
 PRCR           =     $FD8E
-PRHEX          =     $FDDA 
+PRHEX          =     $FDDA
 COUT           =     $FDED
 
 * I/O addresses:
@@ -83,41 +89,20 @@ Q7L            =     $C08E
 MAIN           JSR   $C300      ; Assuming 80 columns
                JSR   PRINT
                DFB   _CLS
-               DFB   _INVERSE
-               ASC   " Address Field Scanner 2.0beta "
-               DFB   _NORMAL
+               ASC   _INVERSE," Address Field Scanner 2.0beta ",_NORMAL
                DFB   23,$8D     ; repeat 8D 23x
-               DFB   _INVERSE
-               ASC   "<-"
-               DFB   _NORMAL
-               ASC   ", "
-               DFB   _INVERSE
-               ASC   "->"
-               DFB   _NORMAL
-               ASC   " Track / re"
-               DFB   _INVERSE
-               ASC   "S"
-               DFB   _NORMAL
-               ASC   "can / "
-               DFB   _INVERSE
-               ASC   "R"
-               DFB   _NORMAL
-               ASC   "ecalibrate / goto "
-               DFB   _INVERSE
-               ASC   "T"
-               DFB   _NORMAL
-               ASC   "rack / "
-               DFB   _INVERSE
-               ASC   "ESC"
-               DFB   _NORMAL
-               ASC   " quit"
+               ASC   _INVERSE,"<-",_NORMAL,", ",_INVERSE,"->",_NORMAL," Track / "
+               ASC   "re",_INVERSE,"S",_NORMAL,"can / "
+               ASC   _INVERSE,"R",_NORMAL,"ecalibrate / "
+			   ASC   "goto ",_INVERSE,"T",_NORMAL,"rack / "
+               ASC   _INVERSE,"ESC",_NORMAL," quit"
                DFB   _HOME
                HEX   8D8D
                HEX   00
 
 * Turn on drive 1, set read mode, init variables
 
-INIT           LDX   #$60       ; assumption = slot 6 
+INIT           LDX   #$60       ; assumption = slot 6
                STX   SLOT16
                LDA   MOTORON,X
                LDA   DRV0EN,X
@@ -143,38 +128,39 @@ DISPLAY        LDA   #20
 
                LDX   SLOT16     ; Restore X
                LDA   MOTORON,X  ; (gets turned off for keypress)
-               LDA   #>FAILBYTS
-               STA   COUNTER+1
-               LDA   #<FAILBYTS
-               STA   COUNTER
+
+* Fully read the track into buffer @ DATA
+
+               JSR SETUPDATA
+
+               LDY #0
+:LOOP          LDA Q6L,X
+               BPL :LOOP
+               STA (DATA),Y
+               INY
+               BNE :LOOP
+               INC DATA+1
+               DEC TEMP
+               BNE :LOOP
+
+               LDA   MOTOROFF,X
 
 * Scan for our prologue and save bytes to buffer
 
-SCAN           LDY   #0
-:LOOP          LDA   Q6L,X      ; match prologue bytes
-               BPL   :LOOP
-:CONT          CMP   PROLOGUE,Y
-               BEQ   :HIT
-               DEC   COUNTER
-               BNE   SCAN
-               DEC   COUNTER+1
-               BNE   SCAN
-               JMP   READERR
-:HIT           STA   BUF,Y
+               JSR SETUPDATA
+               
+SCAN           LDY #0
+:LOOP          LDA (DATA),Y
+               CMP PROLOGUE,Y
+               BNE ADVANCE
                INY
-               CPY   #3
-               BCC   :LOOP
-:MORE          LDA   Q6L,X      ; scan for rest of data bytes
-               BPL   :MORE
-               STA   BUF,Y
-               INY
-               CPY   #NUMBYTES
-               BCC   :MORE
+               CPY #3
+               BCC :LOOP
 
 * Report out the prologue and decode address field
 
 REPORT         LDY   #0
-:1             LDA   BUF,Y 
+:1             LDA   (DATA),Y
                JSR   PRHEX
                INY
                CPY   #NUMBYTES
@@ -193,11 +179,16 @@ REPORT         LDY   #0
                JSR   PRDATA
                JSR   PRCR
 
-* Fill up the text page...
+* Fill up the text page... only test when we print something out
 
 TEST           DEC   SAMPLES
-               BNE   SCAN
-               LDA   MOTOROFF,X
+               BEQ   KEYPRESS
+
+ADVANCE        INC DATA
+               BNE SCAN
+               INC DATA+1
+               DEC TEMP
+               BNE SCAN
 
 * Handle keyboard
 
@@ -231,7 +222,7 @@ CHGTRACK       TXA
                CMP   #35        ; cap at track 34
                BCS   RESCAN
 REPOSN         STA   DSTTRK
-               JSR   ARMMOVE 
+               JSR   ARMMOVE
 RESCAN         JMP   DISPLAY
 
 GOTOTRK        JSR   CLRSCRN
@@ -249,6 +240,15 @@ READERR        LDA   MOTOROFF,X
                ASC   "Unable to read track"00
                JMP   KEYPRESS
 
+* Setup the data buffer
+SETUPDATA	   LDA #>DATASTART
+               STA DATA+1
+               LDA #<DATASTART
+               STA DATA
+               LDA #>DATALEN
+               STA TEMP			; number of pages to load
+               RTS
+
 * Print identifier and 4 and 4 encoded number
 * Acc = character
 * Output = " ?=" where ? is char in Acc
@@ -259,10 +259,11 @@ PRDATA         PHA
                JSR   COUT
                LDA   #"="
                JSR   COUT
-               LDA   BUF,Y
+               LDA   (DATA),Y
                SEC
                ROL
-               AND   BUF+1,Y
+               INY
+               AND   (DATA),Y
                JMP   PRHEX
 
 * Output routine uses simple RLE type encoding
@@ -288,7 +289,7 @@ PRINT          PLA
                STA   PTR2
                JSR   INCPTR
                LDA   (PTR)
-               STA   PTR2+1 
+               STA   PTR2+1
                LDA   (PTR2)
                JSR   PRHEX
                BRA   :MORE
@@ -345,7 +346,7 @@ READHEX        JSR   GETCH
                JSR   COUT
                CMP   #"9"+1
                BCC   :NUMERIC
-               CMP   #"F"+1 
+               CMP   #"F"+1
                BCC   :ALPHA
 :BAD           SEC
                RTS
@@ -402,7 +403,7 @@ PROLOGUE       HEX   D5AA96
 
 * Phase table for moving arm
 * Grouped by inward/outward movement, odd/even track
-* To move the arm, two phases need to be triggered 
+* To move the arm, two phases need to be triggered
 ARMTABLE       HEX   0204
                HEX   0600
                HEX   0604
