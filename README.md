@@ -14,11 +14,19 @@ This application is my lame attempt to understand the old Apple Disk II interfac
 > Please note that this mixes the Cygin Unix-y path flavor with the Windows path flavor.  Java (as it is a Windows application) requires Windows pathing instead of Unix pathing.  See the `Makefile` configuration section.
 
 * Cygwin 64-bit
-** git
-** gcc (to compile Merlin32)
-** make
+ * git
+ * gcc (to compile Merlin32)
+ * make
 * Java (Windows version)
 * AppleCommander 
+* Merlin32
+
+### Mac OS X
+
+* Java
+* AppleCommander
+* Text editor
+* Merlin32
 
 ## Software required to build:
 * [Merlin32](http://www.brutaldeluxe.fr/products/crossdevtools/merlin/index.html) by Brutal Deluxe (version 1.0)
