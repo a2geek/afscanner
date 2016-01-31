@@ -66,9 +66,9 @@ DATA		DA	0		; data buffer
 _init		da	0		; current page init
 _display	da	0		; current page line display handler
 _keypress	da	0		; current page keypress handler
-curline		dfb	0		; current first line
-endline		dfb 0		; end of page = min(curline+20,maxlines)
-maxlines	dfb 0		; maximum number of lines availalable
+topline		dw	0		; current line at top of page
+maxlines	dw	0		; maximum number of lines availalable
+printline	dw	0		; line being printed
 			DEND
 
 inbuf		= $200		; reusable buffer
@@ -76,6 +76,8 @@ inbuf		= $200		; reusable buffer
 DATASTART	   =	   $4000
 DATAEND		   =	   $6000
 DATALEN        =       DATAEND-DATASTART
+
+PAGELEN		= 20		; number of lines displayed in content window
 
 * High ASCII constants
 
@@ -155,40 +157,42 @@ SetupPage
 		dfb $00
 		ldx #_init		; vector offset
 		jsr _VCALL
-		sta maxlines
-		stz curline
+		sty maxlines
+		sta maxlines+1
+		stz topline
+		stz topline+1
 
 DrawPage
 		jsr PRINT	; Clear and then draw the content area
 		dfb _HOME,$8d,$8d,0
 
+		lda #0
+:loop	pha
 		clc
-		lda curline
-		adc #20
-		sta endline
+		adc topline
+		sta printline
+		lda topline+1
+		adc #0
+		sta printline+1
+		cmp maxlines+1
+		blt :drwlin
+		lda printline
 		cmp maxlines
-		bcc :start
-		lda maxlines	; maxlines < endline, use maxlines
-		sta endline
-		
-:start	lda curline
-:next	pha
-		ldx #_display	; vector offset
+		bge :erase
+	
+:drwlin	lda printline+1
+		ldy printline
+		ldx #_display
 		jsr _VCALL
-		pla
-		inc
-		cmp endline
-		bcc :next 
-		
-		; Clear rest of screen
-:wipe	cmp #20
-		bcs KeyboardWait
-		pha
-		jsr PRINT
+		bra :incr
+
+:erase 	jsr PRINT
 		dfb _CLREOL,$8D,0
-		pla
+
+:incr	pla
 		inc
-		bne :wipe
+		cmp #PAGELEN
+		blt :loop
 
 KeyboardWait
 		lda KEYBOARD
@@ -244,19 +248,52 @@ KeyboardWait
 		jmp DrawPage
 
 ; "Local" subroutines
-:down1	lda curline
-		inc
-		sta curline
-		clc
-		adc #20
+
+; if topline+PAGELEN >= maxlines then return
+; topline = topline + 1
+:down1	clc
+		lda topline
+		adc #PAGELEN
+		sta printline
+		lda printline+1
+		adc #0
+		sta printline+1
+		cmp maxlines+1
+		bcc :minus1
+		lda printline
 		cmp maxlines
-		bcc :rts
-		; went too far
-:up1	lda curline
-		dec
-		bmi :rts
-		sta curline
+		bge :rts
+:minus1	inc topline
+		bne :rts
+		inc topline+1
+		rts
+; if topline = 0 then return
+; topline = topline - 1
+:up1	lda topline
+		ora topline+1
+		beq :rts		; already = 0
+		sec
+		lda topline
+		sbc #1
+		sta topline
+		lda topline+1
+		sbc #0
+		sta topline+1
 :rts	rts
+
+;:down1	lda curline
+;		inc
+;		sta curline
+;		clc
+;		adc #20
+;		cmp maxlines
+;		bcc :rts
+;		; went too far
+;:up1	lda curline
+;		dec
+;		bmi :rts
+;		sta curline
+;:rts	rts
 
 :pgKey	ldx #_keypress
 		; Fall through and JMP to _keypress which takes control for local page keys
@@ -292,9 +329,20 @@ SetScreen
 		clc
 		rts
 
+*
 * Data per page: Apple ASCII, Initialization, Display, Keypress (7 bytes)
-* Note: Initialization should also display 24th line for the page.  
-*       Cursor is there and line is clear.
+*
+* Definitions:
+* - BYTE = Character to match on, case insensitive
+* - ADDR = Initialize routine. Returns with A:Y for number of lines.
+*          Note: Initialization should also display 24th line for the page.  
+*                (Cursor is there and line is clear.)
+* - ADDR = Display routine.  Called with A:Y for line number.  Should end with $8D and is 
+*          responsible for clearing the line.
+* - ADDR = Keypress handler.  NOT A SUBROUTINE.  This routine has a number of entry
+*          points it might call.  KeyboardWait for another keypress or SetupPage to
+*          reinitialize and redraw.
+*
 :data
 		dfb "A"
 		da  AboutInit, AboutDisplay, AboutKeypress
@@ -302,6 +350,8 @@ SetScreen
 		da  FieldInit, FieldDisplay, FieldKeypress
 		dfb "B"
 		da	BrowseInit, BrowseDisplay, BrowseKeypress
+		dfb "T"
+		da  TestInit, TestDisplay, TestKeypress
 		dfb 0	; end
 
 *
@@ -309,7 +359,7 @@ SetScreen
 *
 
 * Build array of line pointers in INBUF.
-AboutInit		; Returns with Acc = max lines
+AboutInit		; Returns with A:Y = max lines
 		jsr PRINT
 		asc _INVERSE,_MT_ON,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Scroll / "
 		asc _INVERSE,_MT_ON,_O_APPLE,_NORMAL,"-",_INVERSE,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Page"
@@ -319,20 +369,20 @@ AboutInit		; Returns with Acc = max lines
 		sta PTR
 		lda #>:lines
 		sta PTR+1
-		ldx #0		; max lines
-		ldy #0		; buffer offset
+		ldy #0		; max lines
+		ldx #0		; buffer offset
 		
 :save	lda PTR
-		sta inbuf,y
-		lda PTR+1
-		iny
-		sta inbuf,y
-		iny
+		sta inbuf,x
 		inx
+		lda PTR+1
+		sta inbuf,x
+		inx
+		iny
 
 :loop	lda (PTR)
 		bne :incr
-		txa
+		lda #0		; high byte of max lines; Y = low byte
 		rts
 		
 :incr	lda (PTR)
@@ -409,8 +459,8 @@ AboutInit		; Returns with Acc = max lines
 		asc "-END-",$00
 		dfb 0
 
-AboutDisplay	; Called with Acc = line
-		pha
+AboutDisplay	; Called with A:Y = line
+		phy		; assuming < 256 lines
 		lda #_CLREOL
 		jsr COUT
 		pla
@@ -430,7 +480,7 @@ AboutKeypress	; Called with Acc = key
 * FIELD Interface
 *
 
-FieldInit		; Returns with Acc = max lines
+FieldInit		; Returns with A:Y = max lines
 		jsr PRINT
 		asc _INVERSE,_MT_ON,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Scroll / "
 		asc _INVERSE,_MT_ON,_O_APPLE,_NORMAL,"-",_INVERSE,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Page / "
@@ -467,9 +517,12 @@ FieldInit		; Returns with Acc = max lines
 ; Calculate # of lines
 		txa
 		lsr
+		tay
+		lda #0		; Assumed < 256 lines
 		rts
 
-FieldDisplay		; Called with Acc = line
+FieldDisplay		; Called with A:Y = line
+		tya			; Assuming < 256 lines
 		asl
 		tay
 		lda inbuf,y
@@ -593,14 +646,14 @@ BrowseInit			; Returns with Acc = max lines
 		dec TEMP
 		bne :scan
 ; The number of lines is based on how many bytes we show on screen
-; HOWEVER, we are limited to 255 lines, so we actually skip the last 32 bytes
-		lda #$ff
+		lda #1		; A:Y = $100 or 256 lines
+		ldy #0
 		rts
 
 BrowseDisplay		; Called with Acc = line
 ; Calculate buffer address
-		sta DATA
-		stz DATA+1
+		sta DATA+1
+		sty DATA
 		ldy #5		; times 32
 :mult32	asl DATA
 		rol DATA+1
@@ -645,6 +698,30 @@ BrowseDisplay		; Called with Acc = line
 
 BrowseKeypress		; Called with Acc = key
 		jmp FieldKeypress	; identical to Field ... for now at least
+
+
+*
+* TEST interface
+*
+
+TestInit
+		lda #>535
+		ldy #<535		; Nice odd number of lines > 256
+		rts
+
+TestDisplay
+		phy
+		pha
+		lda #_CLREOL
+		jsr COUT
+		pla
+		jsr PRHEX
+		pla
+		jsr PRHEX
+		jmp PRCR
+
+TestKeypress
+		jmp KeyboardWait
 
 
 *
