@@ -1,25 +1,26 @@
-********************************
+******************************************************************************************
 *
 * Address Field Scanner
+* ========================================================================================
+* This is a simple Disk II scanner
+* to identify address field contents
 *
 * 1/16/2016: Version 1.0
 *
 * 1/29/2016: Version 2.0
 * - Restructuring to support paging and scrollong.
-* - Slowly switching from spaces to tabs as an experiment.
+* - Slowly switching from spaces to tabs as an experiment in code formatting.
 * - Pages available:
 *   + About (default page)
 *   + Headers (updated Address Field Header information)
+*   + Browse track buffer (hilights Address Field Header bytes)
 *
-* This is a simple Disk II scanner
-* to identify address field contents
-*
-********************************
+******************************************************************************************
 
-	ORG $2000
-	TYP SYS
+		ORG $2000
+		TYP SYS
 
-               XC               ; enable 65C02
+		XC               ; enable 65C02
 
 * Constants:
 
@@ -757,136 +758,6 @@ ReadTrack
 		rts
 
 
-DISPLAY        LDA   #20
-               STA   SAMPLES
-               JSR   PRINT
-               DFB   _HOME
-               HEX   8D         ; CR
-               DFB   7,$88     ; backspace into 1st line
-               ASC   "T="
-               DFB   _PRBYTE
-               DA    CURTRK
-               ASC   ".00"
-               HEX   00
-
-               JSR   CLRSCRN
-
-               LDX   SLOT16     ; Restore X
-               LDA   MOTORON,X  ; (gets turned off for keypress)
-
-* Fully read the track into buffer @ DATA
-
-               JSR SETUPDATA
-
-               LDY #0
-:LOOP          LDA Q6L,X
-               BPL :LOOP
-               STA (DATA),Y
-               INY
-               BNE :LOOP
-               INC DATA+1
-               DEC TEMP
-               BNE :LOOP
-
-               LDA   MOTOROFF,X
-
-* Scan for our prologue and save bytes to buffer
-
-               JSR SETUPDATA
-               
-SCAN           LDY #0
-:LOOP          LDA (DATA),Y
-               CMP PROLOGUE,Y
-               BNE ADVANCE
-               INY
-               CPY #3
-               BCC :LOOP
-
-* Report out the prologue and decode address field
-
-REPORT         LDY   #0
-:1             LDA   (DATA),Y
-               JSR   PRHEX
-               INY
-               CPY   #NUMBYTES
-               BCC   :1
-               LDA   #"V"
-               LDY   #OFFSETV
-               JSR   PRDATA
-               LDA   #"T"
-               LDY   #OFFSETT
-               JSR   PRDATA
-               LDA   #"S"
-               LDY   #OFFSETS
-               JSR   PRDATA
-               LDA   #"C"
-               LDY   #OFFSETC
-               JSR   PRDATA
-               JSR   PRCR
-
-* Fill up the text page... only test when we print something out
-
-TEST           DEC   SAMPLES
-               BEQ   KEYPRESS
-
-ADVANCE        INC DATA
-               BNE SCAN
-               INC DATA+1
-               DEC TEMP
-               BNE SCAN
-
-* Handle keyboard
-
-KEYPRESS       LDA   KEYBOARD
-               BPL   KEYPRESS
-               STA   KEYCLEAR
-               CMP   #$E1       ; lower-case A
-               BCC   :0
-               CMP   #$FB       ; lower-case Z + 1
-               BCS   :0
-               AND   #%11011111 ; force to upper case
-:0             CMP   #ESC
-               BEQ   QUIT
-               CMP   #"T"
-               BEQ   GOTOTRK
-               CMP   #"S"
-               BEQ   RESCAN
-               CMP   #"R"
-               BNE   :1
-               JMP   Recalibrate
-:1             LDX   #-1
-               CMP   #LARROW
-               BEQ   CHGTRACK
-               LDX   #1
-               CMP   #RARROW
-               BNE   KEYPRESS
-
-CHGTRACK       TXA
-               CLC
-               ADC   CURTRK
-               CMP   #35        ; cap at track 34
-               BCS   RESCAN
-REPOSN         STA   DSTTRK
-               JSR   ARMMOVE
-RESCAN         JMP   DISPLAY
-
-GOTOTRK        JSR   CLRSCRN
-               JSR   PRINT
-               ASC   "Enter track number: $"00
-               JSR   READBYTE
-               BCS   RESCAN
-               BCC   REPOSN
-
-QUIT           JSR   PRODOSMLI
-               DFB   _MLIQUIT
-               DA    QUITPARM
-               JMP   MAIN		; should never be executed
-
-READERR        LDA   MOTOROFF,X
-               JSR   PRINT
-               ASC   "Unable to read track"00
-               JMP   KEYPRESS
-
 * Setup the data buffer
 SETUPDATA	   LDA #>DATASTART
                STA DATA+1
@@ -1021,11 +892,6 @@ READHEX        JSR   GETCH
                RTS
 
 * Move the Disk II arm:
-
-Recalibrate
-		LDA #40
-		STA CURTRK     ; force a recalibration
-		STZ DSTTRK
 
 ARMMOVE        LDA   CURTRK
                CMP   DSTTRK
