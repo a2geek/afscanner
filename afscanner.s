@@ -4,8 +4,12 @@
 *
 * 1/16/2016: Version 1.0
 *
-* 1/16/2016: Version 2.0
-* 
+* 1/29/2016: Version 2.0
+* - Restructuring to support paging and scrollong.
+* - Slowly switching from spaces to tabs as an experiment.
+* - Pages available:
+*   + About (default page)
+*   + Headers (updated Address Field Header information)
 *
 * This is a simple Disk II scanner
 * to identify address field contents
@@ -32,22 +36,42 @@ _PRBYTE        =     1          ; print byte @ addr
 _CLS           =     $8C        ; clear screen
 _INVERSE       =     $8F
 _NORMAL        =     $8E
+_MT_OFF        =     $98        ; disable MouseText 
 _HOME          =     $99        ; home the cursor, not cls
+_MT_ON         =     $9B        ; enable MouseText for uppercase inverse characters
 _CLREOL        =     $9D        ; clear to EOL
+
+_C_APPLE       =     "@"		; Closed Apple
+_O_APPLE       =     "A"		; Open Apple
+_L_ARROW       =     "H"		; Left Arrow
+_R_ARROW       =     "U"		; Right Arrow
+_U_ARROW       =     "K"		; Up Arrow
+_D_ARROW       =     "J"		; Down Arrow
+_H_LINE        =     "S"		; Horizontal Line (full width)
+
 
 * Variable locations:
 
-               DUM   $0         ; ZP locs
-SAMPLES        DFB   0          ; number of sector samples
-CURTRK         DFB   0          ; current track
-DSTTRK         DFB   0          ; destination track
-PTR            DA    0          ; primary print pointer
-PTR2           DA    0          ; secondary print pointer
-SLOT16         DFB   0          ; slot# * 16
-COUNTER        DA    0          ; fail counter
-TEMP           DFB   0          ; local variable
-DATA					 DA    0          ; data buffer
-               DEND
+			DUM	$0		; ZP locs
+SAMPLES		DFB	0		; number of sector samples
+CURTRK		DFB	0		; current track
+DSTTRK		DFB	0		; destination track
+PTR			DA	0		; primary print pointer
+PTR2		DA	0		; secondary print pointer
+SLOT16		DFB	0		; slot# * 16
+COUNTER		DA	0		; fail counter
+TEMP		DFB	0		; local variable
+DATA		DA	0		; data buffer
+
+_init		da	0		; current page init
+_display	da	0		; current page line display handler
+_keypress	da	0		; current page keypress handler
+curline		dfb	0		; current first line
+endline		dfb 0		; end of page = min(curline+20,maxlines)
+maxlines	dfb 0		; maximum number of lines availalable
+			DEND
+
+inbuf		= $200		; reusable buffer
 
 DATASTART	   =	   $4000
 DATAEND		   =	   $6000
@@ -55,11 +79,15 @@ DATALEN        =       DATAEND-DATASTART
 
 * High ASCII constants
 
-CTRLH          =     "H"-$40
-LARROW         =     CTRLH
-CTRLU          =     "U"-$40
-RARROW         =     CTRLU
-ESC            =     $9B
+CTRLH		= "H"-$40
+LARROW		= CTRLH
+CTRLU		= "U"-$40
+RARROW		= CTRLU
+ESC			= $9B
+CTRLK		= "K"-$40
+UpArrow		= CTRLK
+CTRLJ		= "J"-$40
+DownArrow	= CTRLJ
 
 * ProDOS:
 
@@ -76,8 +104,9 @@ COUT           =     $FDED
 
 * I/O addresses:
 
-KEYBOARD       =     $C000
-KEYCLEAR       =     $C010
+KEYBOARD	= $C000
+KEYCLEAR	= $C010
+OpenApple	= $C061
 
 * Disk II addresses:
 
@@ -91,42 +120,466 @@ Q7L            =     $C08E
 
 * Display screen
 
-MAIN           JSR   $C300      ; Assuming 80 columns
-               JSR   PRINT
-               DFB   _CLS
-               ASC   _INVERSE," Address Field Scanner 2.0beta ",_NORMAL
-               DFB   23,$8D     ; repeat 8D 23x
-               ASC   _INVERSE,"<-",_NORMAL,", ",_INVERSE,"->",_NORMAL," Track / "
-               ASC   "re",_INVERSE,"S",_NORMAL,"can / "
-               ASC   _INVERSE,"R",_NORMAL,"ecalibrate / "
-			   ASC   "goto ",_INVERSE,"T",_NORMAL,"rack / "
-               ASC   _INVERSE,"ESC",_NORMAL," quit"
-               DFB   _HOME
-               HEX   8D8D
-               HEX   00
+MAIN	JSR   $C300      ; Assuming 80 columns
+		JSR   PRINT
+		DFB   _CLS
+		ASC   "AFScanner",$8D
+		DFB   _MT_ON,_INVERSE,80,_H_LINE,_NORMAL,_MT_OFF  ; wraps!
+		DFB   20,$8D
+		DFB   _MT_ON,_INVERSE,80,_H_LINE,_NORMAL,_MT_OFF  ; wraps!
+		ASC   _MT_ON,_INVERSE,_L_ARROW,_NORMAL,", ",_INVERSE,_R_ARROW,_NORMAL,_MT_OFF," Track / "
+		ASC   "re",_INVERSE,"S",_NORMAL,"can / "
+		ASC   _INVERSE,"R",_NORMAL,"ecalibrate / "
+		ASC   "goto ",_INVERSE,"T",_NORMAL,"rack / "
+		ASC   _INVERSE,"ESC",_NORMAL," quit"
+		DFB   _HOME
+		HEX   8D8D
+		HEX   00
 
-* Turn on drive 1, set read mode, init variables
+* Setup local variables
 
-INIT           LDX   #$60       ; assumption = slot 6
-               STX   SLOT16
-               LDA   MOTORON,X
-               LDA   DRV0EN,X
-               LDA   Q7L,X
-               LDA   Q6L,X
-RECAL          LDA   #40
-               STA   CURTRK     ; force a recalibration
-               STZ   DSTTRK
-               JSR   ARMMOVE
+Initialize
+		ldx #$60		; assumption = slot 6
+		stx SLOT16
+		lda #40
+		sta CURTRK		; force a recalibration
+		stz DSTTRK
+		lda #"A"		; default screen is "About" page
+		jsr SetScreen
+
+SetupPage
+		jsr PRINT		; position cursor on bottom line
+		dfb _HOME
+		dfb 23,$8D
+		dfb _CLREOL
+		dfb $00
+		ldx #_init		; vector offset
+		jsr _VCALL
+		sta maxlines
+		stz curline
+
+DrawPage
+		jsr PRINT	; Clear and then draw the content area
+		dfb _HOME,$8d,$8d,0
+
+		clc
+		lda curline
+		adc #20
+		sta endline
+		cmp maxlines
+		bcc :start
+		lda maxlines	; maxlines < endline, use maxlines
+		sta endline
+		
+:start	lda curline
+:next	pha
+		ldx #_display	; vector offset
+		jsr _VCALL
+		pla
+		inc
+		cmp endline
+		bcc :next 
+		
+		; Clear rest of screen
+:wipe	cmp #20
+		bcs KeyboardWait
+		pha
+		jsr PRINT
+		dfb _CLREOL,$8D,0
+		pla
+		inc
+		bne :wipe
+
+KeyboardWait
+		lda KEYBOARD
+		bpl KeyboardWait
+; Uppercase the if it's A-Z
+		cmp #"a"
+		blt :goodky
+		cmp #"z"+1
+		bge :goodky
+		and #$df		; uppercase mask
+:goodky	sta KEYCLEAR
+		bit OpenApple
+		bpl :normal
+; OpenApple handler
+		jsr SetScreen
+		bcs :paging
+		jsr CLRSCRN
+		jmp SetupPage
+; OA-Up
+:paging cmp #UpArrow
+		bne :nPgUp
+		ldy #15
+:uploop	jsr :up1
+		dey
+		bne :uploop
+		beq :back		; always
+; OA-Down
+:nPgUp	cmp #DownArrow
+		bne :chkOAQ
+		ldy #15
+:dnloop	jsr :down1
+		dey
+		bne :dnloop
+		beq :back		; always
+; OA-Q
+:chkOAQ	cmp #"Q"
+		bne :back
+		jsr PRODOSMLI
+		dfb _MLIQUIT
+		da QUITPARM
+:back	jmp DrawPage	; fall through and common return
+
+; Common keypress handler
+; Up
+:normal	cmp #UpArrow
+		bne :notUp
+		jsr :up1
+		jmp DrawPage
+; Down
+:notUp	cmp #DownArrow
+		bne :pgKey
+		jsr :down1
+		jmp DrawPage
+
+; "Local" subroutines
+:down1	lda curline
+		inc
+		sta curline
+		clc
+		adc #20
+		cmp maxlines
+		bcc :rts
+		; went too far
+:up1	lda curline
+		dec
+		bmi :rts
+		sta curline
+:rts	rts
+
+:pgKey	ldx #_keypress
+		; Fall through and JMP to _keypress which takes control for local page keys
+
+* Simple vector call from ZP based on X register
+
+_VCALL	jmp: ($00,x)		; Merlin32 needs to know 16 bit JMP
+
+* Handle screen change - both called by app init and normal keyboard handler
+
+SetScreen
+		ldx #0
+:next	bit :data,x
+		bpl :notf
+		cmp :data,x
+		beq :setup
+		pha
+		txa
+		clc
+		adc #7
+		tax
+		pla
+		bra :next
+:notf	sec			; Not found
+		rts
+:setup	ldy #0
+:copy	inx
+		lda :data,x
+		sta _init,y
+		iny
+		cpy #6
+		bne :copy
+		clc
+		rts
+
+* Data per page: Apple ASCII, Initialization, Display, Keypress (7 bytes)
+* Note: Initialization should also display 24th line for the page.  
+*       Cursor is there and line is clear.
+:data
+		dfb "A"
+		da  AboutInit, AboutDisplay, AboutKeypress
+		dfb "F"
+		da  FieldInit, FieldDisplay, FieldKeypress
+		dfb 0	; end
+
+*
+* ABOUT page interface
+*
+
+* Build array of line pointers in INBUF.
+AboutInit		; Returns with Acc = max lines
+		jsr PRINT
+		asc _INVERSE,_MT_ON,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Scroll / "
+		asc _INVERSE,_MT_ON,_O_APPLE,_NORMAL,"-",_INVERSE,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Page"
+		dfb 0
+
+		lda #<:lines
+		sta PTR
+		lda #>:lines
+		sta PTR+1
+		ldx #0		; max lines
+		ldy #0		; buffer offset
+		
+:save	lda PTR
+		sta inbuf,y
+		lda PTR+1
+		iny
+		sta inbuf,y
+		iny
+		inx
+
+:loop	lda (PTR)
+		bne :incr
+		txa
+		rts
+		
+:incr	lda (PTR)
+		pha
+		inc PTR
+		bne :skip
+		inc PTR+1
+:skip	pla
+		beq :save
+		bne :incr
+
+* Guide     00000000011111111112222222222333333333344444444445555555555666666666677777777778
+*           12345678901234567890123456789012345678901234567890123456789012345678901234567890
+*          |         +         +         +         +         +         +         +         +|
+:lines	asc _INVERSE," Address Field Scanner ",_NORMAL,$00
+		asc "Version 2.0beta",$00
+		asc " ",$00
+		asc "This application is my lame attempt to understand the old Apple Disk II",$00
+		asc "interface.",$00
+		asc " ",$00
+		asc "As of Version 2 of AFSCANNER, multiple pages have been introduced to better",$00
+		asc "review the contents of a disk buffer and analyze a disk.",$00
+		asc " ",$00
+		asc "Use the ",_INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"-key combinations to toggle pages.",$00
+		asc " ",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"A = This about page.",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"F = Address field display.  " ; (cont)
+		asc "(Assuming 'good' address fields on disk.)",$00
+		asc " ",$00
+		asc "Source available at https://github.com/a2geek/afscanner",$00
+		asc " ",$00
+		asc "Global Keys",$00
+		asc "===========",$00
+		asc " ",$00
+		asc _INVERSE,_MT_ON,_D_ARROW,_MT_OFF,_NORMAL,"  Scroll down 1 line",$00
+		asc _INVERSE,_MT_ON,_U_ARROW,_MT_OFF,_NORMAL,"  Scroll up 1 line",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_D_ARROW,_MT_OFF,_NORMAL," Page down 15 lines",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_U_ARROW,_MT_OFF,_NORMAL," Page up 15 lines",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"Q  Quit to ProDOS",$00
+		asc " ",$00
+		asc "Address Field Display",$00
+		asc "=====================",$00
+		asc " ",$00
+		asc "Display the list of Address Fields, the disk bytes, as well as the decoded",$00
+		asc "values to indicate what sectors are phyiscally present and their order on disk.",$00
+		asc "Note that the buffer is $2000 (8192) bytes long and some sectors will be",$00
+		asc "repeated.",$00
+		asc " ",$00
+		asc "Headers are currently set to "
+		dfb 1
+		da  PROLOGUE
+		dfb " ",1
+		da  PROLOGUE+1
+		dfb " ",1
+		da  PROLOGUE+2
+		dfb $00
+		asc " ",$00
+		asc "-END-",$00
+		dfb 0
+
+AboutDisplay	; Called with Acc = line
+		pha
+		lda #_CLREOL
+		jsr COUT
+		pla
+		asl
+		tay
+		lda inbuf,y
+		tax
+		lda inbuf+1,y
+		jsr PRINTP
+		jmp PRCR
+
+AboutKeypress	; Called with Acc = key
+		; Do Nothing, continue loop
+		jmp KeyboardWait
+
+*
+* FIELD Interface
+*
+
+FieldInit		; Returns with Acc = max lines
+		jsr PRINT
+		asc _INVERSE,_MT_ON,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Scroll / "
+		asc _INVERSE,_MT_ON,_O_APPLE,_NORMAL,"-",_INVERSE,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Page / "
+		asc _MT_ON,_INVERSE,_L_ARROW,_R_ARROW,_NORMAL,_MT_OFF," Track / "
+		asc "re",_INVERSE,"S",_NORMAL,"can / "
+		asc _INVERSE,"R",_NORMAL,"ecalibrate / "
+		asc "goto ",_INVERSE,"T",_NORMAL,"rack"
+		dfb 0
+
+* Scan for our prologue and save positions in INBUF
+
+		jsr ReadTrack		; position head and fully populate buffer
+		ldx #0				; index for INBUF
+		jsr SETUPDATA
+:scan	ldy #0				; index for comparisons
+:loop	lda (DATA),y
+		cmp PROLOGUE,Y
+		bne :adv
+		iny
+		cpy #3
+		bcc :loop
+; We found prologue bytes, save DATA address
+		lda DATA
+		sta inbuf,x
+		inx
+		lda DATA+1
+		sta inbuf,x
+		inx
+:adv	inc DATA
+		bne :scan
+		inc DATA+1
+		dec TEMP
+		bne :scan
+; Calculate # of lines
+		txa
+		lsr
+		rts
+
+FieldDisplay		; Called with Acc = line
+		asl
+		tay
+		lda inbuf,y
+		sta DATA
+		pha
+		lda inbuf+1,y
+		sta DATA+1
+		pha
+; Display offset
+		lda #"+"
+		jsr COUT
+		pla
+		and #$3f
+		jsr PRHEX
+		pla
+		jsr PRHEX
+		jsr PRINT
+		asc "-  ",$00
+; Display 'disk' bytes
+		ldy #0
+		ldx #0
+:nextg	lda :groups,x
+		sta TEMP
+:bytes	lda (DATA),y
+		jsr PRHEX
+		iny
+		dec TEMP
+		bne :bytes
+		lda #" "
+		jsr COUT
+		inx
+		cpx #6
+		bne :nextg
+		jsr COUT	; 2nd space
+; Display values
+		lda #"V"
+		ldy #OFFSETV
+		jsr PRDATA
+		lda #"T"
+		ldy #OFFSETT
+		jsr PRDATA
+		lda #"S"
+		ldy #OFFSETS
+		jsr PRDATA
+		lda #"C"
+		ldy #OFFSETC
+		jsr PRDATA
+		jmp PRCR
+; Address Field byte groupings
+:groups	dfb 3,2,2,2,2,3
+
+FieldKeypress		; Called with Acc = key
+		ldx #-1
+		cmp #LARROW
+		beq :chgtrk
+		ldx #1
+		cmp #RARROW
+		beq :chgtrk
+		cmp #"R"
+		beq :recal
+		cmp #"S"
+		beq :setup
+		cmp #"T"
+		beq :gotrk
+:back	jmp KeyboardWait
+
+:chgtrk	txa
+		clc
+		adc CURTRK
+		cmp #35			; cap at track 35 (0..34)
+		bcs :back
+:setdst	sta DSTTRK
+:setup	jmp SetupPage	; this redraws page and re-initializes on new track
+:recal	lda #40
+		sta CURTRK		; This forces the recalibration
+		lda #0
+		beq :setdst
+
+:gotrk	jsr CLRSCRN
+		jsr PRINT
+		asc "Enter track number: $"00
+		jsr READBYTE
+		bcs :setup
+		bcc :setdst
+
+*
+* DISK II routines
+*
+
+ReadTrack
+		jsr PRINT
+		dfb _HOME,$8D,4,$88
+		asc "T="
+		dfb _PRBYTE
+		da DSTTRK
+		dfb 0
+
+		ldx SLOT16		; Slot*16
+		lda MOTORON,x	; turn on drive
+		lda DRV0EN,x	; Drive #1
+		lda Q7L,x		; Q7 = Low and Q6 = Low => READ mode
+		lda Q6L,x
+		jsr ARMMOVE		; Go to our track (app init sets to 40, so first time this recalibrates)
+; Fully read the track into buffer @ DATA
+		jsr SETUPDATA
+		ldy #0
+:loop	lda Q6L,x
+		bpl :loop
+		sta (DATA),y
+		iny
+		bne :loop
+		inc DATA+1
+		dec TEMP
+		bne :loop
+		lda MOTOROFF,x
+		rts
+
 
 DISPLAY        LDA   #20
                STA   SAMPLES
                JSR   PRINT
                DFB   _HOME
                HEX   8D         ; CR
-               DFB   11,$88     ; backspace into 1st line
-               ASC   "Track = "
+               DFB   7,$88     ; backspace into 1st line
+               ASC   "T="
                DFB   _PRBYTE
                DA    CURTRK
+               ASC   ".00"
                HEX   00
 
                JSR   CLRSCRN
@@ -213,7 +666,7 @@ KEYPRESS       LDA   KEYBOARD
                BEQ   RESCAN
                CMP   #"R"
                BNE   :1
-               JMP   RECAL
+               JMP   Recalibrate
 :1             LDX   #-1
                CMP   #LARROW
                BEQ   CHGTRACK
@@ -279,44 +732,55 @@ PRDATA         PHA
 *       $00 = exit
 *       $01 = print byte from address
 *       $02-$7F = repeat next character
+*
+* There are two entry points:
+* - PRINT = inline text being printed out; implicit PTR increment at start
+* - PRINTP = print address passed in AX; no implicit PTR increment at start
 
-PRINT          PLA
-               STA   PTR
-               PLA
-               STA   PTR+1
-:MORE          JSR   INCPTR
-               LDX   #1         ; Assume 1 char to be output
-               LDA   (PTR)
-               BEQ   :EXIT
-               BMI   :SINGLE
-               CMP   #1
-               BNE   :REPEAT
-               JSR   INCPTR
-               LDA   (PTR)
-               STA   PTR2
-               JSR   INCPTR
-               LDA   (PTR)
-               STA   PTR2+1
-               LDA   (PTR2)
-               JSR   PRHEX
-               BRA   :MORE
-:REPEAT        TAX
-               JSR   INCPTR
-               LDA   (PTR)
-:SINGLE        JSR   COUT
-               DEX
-               BNE   :SINGLE
-               BEQ   :MORE
-:EXIT          LDA   PTR+1
-               PHA
-               LDA   PTR
-               PHA
-               RTS
+PRINT	PLA
+		STA PTR
+		PLA
+		STA PTR+1
+		JSR :MORE
+		LDA PTR+1
+		PHA
+		LDA PTR
+		PHA
+		RTS
 
-INCPTR         INC   PTR
-               BNE   :EXIT
-               INC   PTR+1
-:EXIT          RTS
+PRINTP	STA PTR+1
+		STX PTR
+		BRA :START
+
+:MORE	JSR INCPTR
+:START	LDX #1			; Assume 1 char to be output
+		LDA (PTR)
+		BEQ :EXIT
+		BMI :SINGLE
+		CMP #1
+		BNE :REPEAT
+		JSR INCPTR
+		LDA (PTR)
+		STA PTR2
+		JSR INCPTR
+		LDA (PTR)
+		STA PTR2+1
+		LDA (PTR2)
+		JSR PRHEX
+		BRA :MORE
+:REPEAT	TAX
+		JSR INCPTR
+		LDA (PTR)
+:SINGLE	JSR COUT
+		DEX
+		BNE :SINGLE
+		BEQ :MORE
+:EXIT	RTS
+
+INCPTR	INC PTR
+		BNE :EXIT
+		INC PTR+1
+:EXIT	RTS
 
 * Clear the data portion of the screen
 * (Lines 3-22) and reposition to line 3.
@@ -370,6 +834,11 @@ READHEX        JSR   GETCH
                RTS
 
 * Move the Disk II arm:
+
+Recalibrate
+		LDA #40
+		STA CURTRK     ; force a recalibration
+		STZ DSTTRK
 
 ARMMOVE        LDA   CURTRK
                CMP   DSTTRK
