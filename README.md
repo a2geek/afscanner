@@ -2,6 +2,24 @@
 
 This application is my lame attempt to understand the old Apple Disk II interface.  This included writing the read, decode, and physical routines to move the disk arm.
 
+## Screen Shots
+
+The initial page of the application will be the About Page.  This is primarily to give the user a chance to swap disks but maybe lets them read up on what is available.  (New as of V2.0)
+
+![About Page](images/AboutPage.png)
+
+For close to normal disks, the Address Field Scanner can be used to spot-check which sectors are available on the track.  If this pages displays empty, you may want to peruse the raw disk data on the Browse page.  (New as of V1.0)
+
+![Address Field Page](images/AddressFieldPage.png)
+
+The Browse Buffer Page displays the disk-level bytes.  If the standard address field header is located, those bytes will be hilighted to make them stand out.  (New as of V2.0)
+
+![Browse Buffer Page](images/BrowseBufferPage.png)
+
+The Graphical Disk Display is a rudimentary component to give a 'picture' of the disk.  This counts sync bytes (generally $FF); note that timing is not considered so these may be data bytes as well (8 bit versus 10 bits on disk).
+
+![Graphical Disk Display](images/GraphicalDiskDisplay.png)
+
 ## Notes
 * `Makefile` is very rudimentary as I am not a Makefile type person and build is so fast it doesn't matter
 * Pay attention to versions
