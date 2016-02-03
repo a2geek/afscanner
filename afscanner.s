@@ -17,10 +17,15 @@
 *
 ******************************************************************************************
 
-		ORG $2000
 		TYP SYS
 
 		XC               ; enable 65C02
+
+* Program Locations
+
+OriginAddress = $2000
+ProgramAddress = $6000
+ProgramLength = ProgramEnd-ProgramAddress
 
 * Constants:
 
@@ -62,13 +67,15 @@ PTR2		DA	0		; secondary print pointer
 SLOT16		DFB	0		; slot# * 16
 COUNTER		DA	0		; fail counter
 TEMP		DFB	0		; local variable
+TEMPY		DFB 0		; local Y coordinate
 DATA		DA	0		; data buffer
 
 _init		da	0		; current page init
 _display	da	0		; current page line display handler
 _keypress	da	0		; current page keypress handler
+scrolling	dfb	0		; flag for scrolling (in high bit)
 topline		dw	0		; current line at top of page
-maxlines	dw	0		; maximum number of lines availalable
+maxlines	dw	0		; maximum number of lines available
 printline	dw	0		; line being printed
 			DEND
 
@@ -97,13 +104,18 @@ DownArrow	= CTRLJ
 PRODOSMLI      =     $BF00
 _MLIQUIT       =     $65
 
-* ROM routines:
+* ROM routines and associated addresses:
 
-DELAY          =     $FCA8
-GETCH          =     $FD0C
-PRCR           =     $FD8E
-PRHEX          =     $FDDA
-COUT           =     $FDED
+TEXT		= $FB2F
+HGR			= $F3E2
+HPOSN		= $F411
+HBAS		= $26
+
+DELAY		= $FCA8
+GETCH 		= $FD0C
+PRCR		= $FD8E
+PRHEX		= $FDDA
+COUT		= $FDED
 
 * I/O addresses:
 
@@ -121,7 +133,33 @@ DRV0EN         =     $C08A
 Q6L            =     $C08C
 Q7L            =     $C08E
 
+* Relocate application above HGR and HGR2 page
+
+		org OriginAddress
+
+		lda #>OriginEnd
+		sta PTR+1
+		lda #<OriginEnd
+		sta PTR
+		lda #>ProgramAddress
+		sta PTR2+1
+		stz PTR2
+		ldy #0
+		ldx #>ProgramLength+255	; account for non-zero low byte
+:0		lda (PTR),y
+		sta (PTR2),y
+		iny
+		bne :0
+		inc PTR+1
+		inc PTR2+1
+		dex
+		bne :0
+		jmp ProgramAddress
+OriginEnd		; Marker for code relocation
+
 * Display screen
+
+		org ProgramAddress
 
 MAIN	JSR   $C300      ; Assuming 80 columns
 		JSR   PRINT
@@ -151,6 +189,7 @@ Initialize
 		jsr SetScreen
 
 SetupPage
+		jsr TEXT		; ensure we are out of graphics modes as application has some!
 		jsr PRINT		; position cursor on bottom line
 		dfb _HOME
 		dfb 23,$8D
@@ -158,6 +197,7 @@ SetupPage
 		dfb $00
 		ldx #_init		; vector offset
 		jsr _VCALL
+		ror scrolling	; set flag based on C
 		sty maxlines
 		sta maxlines+1
 		stz topline
@@ -166,8 +206,17 @@ SetupPage
 DrawPage
 		jsr PRINT	; Clear and then draw the content area
 		dfb _HOME,$8d,$8d,0
-
+		
+; If we aren't scrolling, call _display vector ONCE and then handle keyboard.
+		bit scrolling
+		bpl :scroll
 		lda #0
+		tay
+		ldx #_display
+		jsr _VCALL
+		jmp KeyboardWait
+
+:scroll	lda #0
 :loop	pha
 		clc
 		adc topline
@@ -282,20 +331,6 @@ KeyboardWait
 		sta topline+1
 :rts	rts
 
-;:down1	lda curline
-;		inc
-;		sta curline
-;		clc
-;		adc #20
-;		cmp maxlines
-;		bcc :rts
-;		; went too far
-;:up1	lda curline
-;		dec
-;		bmi :rts
-;		sta curline
-;:rts	rts
-
 :pgKey	ldx #_keypress
 		; Fall through and JMP to _keypress which takes control for local page keys
 
@@ -335,7 +370,10 @@ SetScreen
 *
 * Definitions:
 * - BYTE = Character to match on, case insensitive
-* - ADDR = Initialize routine. Returns with A:Y for number of lines.
+* - ADDR = Initialize routine (load track, calculate lookup tables, etc). 
+*          Return:
+*               A:Y for number of lines, 
+*               Carry: Set = no scrolling (graphics, form, etc), Clear = scrolling.
 *          Note: Initialization should also display 24th line for the page.  
 *                (Cursor is there and line is clear.)
 * - ADDR = Display routine.  Called with A:Y for line number.  Should end with $8D and is 
@@ -351,6 +389,8 @@ SetScreen
 		da  FieldInit, FieldDisplay, FieldKeypress
 		dfb "B"
 		da	BrowseInit, BrowseDisplay, BrowseKeypress
+		dfb "G"
+		da	HgrInit, HgrDisplay, HgrKeypress
 		dfb "T"
 		da  TestInit, TestDisplay, TestKeypress
 		dfb 0	; end
@@ -383,7 +423,9 @@ AboutInit		; Returns with A:Y = max lines
 
 :loop	lda (PTR)
 		bne :incr
+		dey			; we're one past...
 		lda #0		; high byte of max lines; Y = low byte
+		clc			; we need scrolling
 		rts
 		
 :incr	lda (PTR)
@@ -410,9 +452,10 @@ AboutInit		; Returns with A:Y = max lines
 		asc "Use the ",_INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"-key combinations to toggle pages.",$00
 		asc " ",$00
 		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"A = This about page.",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"B = Browse track buffer.",$00
 		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"F = Address field display.  " ; (cont)
 		asc "(Assuming 'good' address fields on disk.)",$00
-		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"B = Browse track buffer.",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"G = Graphical disk display.",$00
 		asc " ",$00
 		asc "Source available at https://github.com/a2geek/afscanner",$00
 		asc " ",$00
@@ -456,6 +499,13 @@ AboutInit		; Returns with A:Y = max lines
 		dfb " ",1
 		da  PROLOGUE+2
 		dfb $00
+		asc " ",$00
+		asc "Graphical Disk Display",$00
+		asc "======================",$00
+		asc " ",$00
+		asc "Scans an entire disk and graphically displays where sync ($FF) bytes appear on",$00
+		asc "disk.  Note that the length of each bar indicates how many sync bytes were in",$00
+		asc "that section of the disk.  Each bar represents approximately 46 bytes.",$00
 		asc " ",$00
 		asc "-END-",$00
 		dfb 0
@@ -520,6 +570,7 @@ FieldInit		; Returns with A:Y = max lines
 		lsr
 		tay
 		lda #0		; Assumed < 256 lines
+		clc			; we need scrolling
 		rts
 
 FieldDisplay		; Called with A:Y = line
@@ -649,6 +700,7 @@ BrowseInit			; Returns with Acc = max lines
 ; The number of lines is based on how many bytes we show on screen
 		lda #1		; A:Y = $100 or 256 lines
 		ldy #0
+		clc			; we need scrolling
 		rts
 
 BrowseDisplay		; Called with Acc = line
@@ -700,6 +752,142 @@ BrowseDisplay		; Called with Acc = line
 BrowseKeypress		; Called with Acc = key
 		jmp FieldKeypress	; identical to Field ... for now at least
 
+*
+* HGR/Graphics interface
+*
+
+; Init displays HGR and the static text on the page
+HgrInit	
+		jsr PRINT
+		asc "re",_INVERSE,"S",_NORMAL,"can / "
+		asc _INVERSE,"R",_NORMAL,"ecalibrate"
+		dfb 0
+; Lay out a our rudimentary page:
+		jsr HGR
+		stz TEMPY
+:newlin	lda TEMPY
+		jsr HPOSN
+		ldy #0
+:line	lda TEMPY
+		and #$8
+		bne :lownyb
+:hinyb	tya
+		lsr
+		lsr
+		lsr
+		lsr
+		bra :draw
+:lownyb	tya
+		and #$0f
+:draw	asl	
+		asl
+		asl
+		sta TEMP
+		lda TEMPY
+		and #$07
+		ora TEMP
+		tax
+		lda HgrHexFont,x
+		sta (HBAS),y
+		iny
+		cpy #35
+		bne :line
+		inc TEMPY
+		lda TEMPY
+		cmp #16
+		blt :newlin
+; return values
+		sec				; no scrolloing
+		lda #0			; 0 = number of lines (A:Y)
+		tay
+		rts
+
+HgrDisplay
+; Store current track to not interfere with other screens
+		lda DSTTRK
+		pha
+; 144 lines (18 text lines * 8 graphic lines ea)
+; buffer = 8192 bytes / 144 lines = 56 bytes ea
+; OR NIB suggest 6656 / 144 lines = 46 bytes ea
+		stz DSTTRK
+:nxttrk	jsr ReadTrack
+		lda #16
+		sta :ycoord
+		jsr SETUPDATA
+		stz :count
+		lda #46
+		sta :bytes
+:loop	lda (DATA)
+		cmp #$FF
+		bne :skip
+		inc :count
+:skip	dec :bytes
+		bne :skip2
+		lda :ycoord
+		jsr HPOSN
+		ldy CURTRK
+		ldx #0
+		lda :count
+		beq :empty
+:bits	inx
+		lsr
+		bne :bits
+:empty	lda :plot,x
+		sta (HBAS),y
+		inc :ycoord
+		lda :ycoord
+		cmp #160
+		bge :botm
+		stz :count
+		lda #46
+		sta :bytes
+:skip2	inc DATA
+		bne :loop
+		inc DATA+1
+		dec TEMP
+		bne :loop
+:botm	inc DSTTRK
+		lda DSTTRK
+		cmp #35
+		blt :nxttrk
+; Restore current target track for other screens
+		pla
+		sta DSTTRK
+		rts
+:ycoord	dfb	0
+:count	dfb 0
+:bytes	dfb 0
+:plot	hex 000103070f1f3f7fff
+
+HgrKeypress
+		cmp #"R"
+		beq :recal
+		cmp #"S"
+		beq :setup
+:back	jmp KeyboardWait
+
+:recal	lda #40
+		sta CURTRK		; This forces the recalibration
+		stz DSTTRK
+:setup	jmp SetupPage	; this redraws page and re-initializes, presumably, on a new disk
+
+HgrHexFont		; Stolen from https://github.com/Michaelangel007/apple2_hgr_font_tutorial
+		hex 1C22322A26221C00	; 0
+		hex 080C080808081C00	; 1
+		hex 1C22201804023E00	; 2
+		hex 3E20101820221C00	; 3
+		hex 101814123E101000	; 4
+		hex 3E021E2020221C00	; 5
+		hex 3804021E22221C00	; 6
+		hex 3E20100804040400	; 7
+		hex 1C22221C22221C00	; 8
+		hex 1C22223C20100E00	; 9
+		hex 081422223E222200	; A
+		hex 1E22221E22221E00	; B
+		hex 1C22020202221C00	; C
+		hex 1E22222222221E00	; D
+		hex 3E02021E02023E00	; E
+		hex 3E02021E02020200	; F
 
 *
 * TEST interface
@@ -944,3 +1132,5 @@ QUITPARM       DFB   4			; 4 parameters
                DA    0			; reserved
                DFB   0			; reserved
                DA    0			; reserved
+
+ProgramEnd
