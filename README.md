@@ -20,6 +20,10 @@ The Graphical Disk Display is a rudimentary component to give a 'picture' of the
 
 ![Graphical Disk Display](images/GraphicalDiskDisplay.png)
 
+The Buffer Count Page totals the number of each type of "disk byte" in the buffer for easy reference.
+
+![Buffer Count Page](images/BufferCountPage.png)
+
 ## Notes
 * `Makefile` is very rudimentary as I am not a Makefile type person and build is so fast it doesn't matter
 * Pay attention to versions

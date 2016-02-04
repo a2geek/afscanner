@@ -14,6 +14,8 @@
 *   + About (default page)
 *   + Headers (updated Address Field Header information)
 *   + Browse track buffer (hilights Address Field Header bytes)
+*   + Graphical disk display
+*   + Buffer counts 
 *
 ******************************************************************************************
 
@@ -391,6 +393,8 @@ SetScreen
 		da	BrowseInit, BrowseDisplay, BrowseKeypress
 		dfb "G"
 		da	HgrInit, HgrDisplay, HgrKeypress
+		dfb "C"
+		da	CountInit, CountDisplay, CountKeypress
 		dfb "T"
 		da  TestInit, TestDisplay, TestKeypress
 		dfb 0	; end
@@ -400,7 +404,7 @@ SetScreen
 *
 
 * Build array of line pointers in INBUF.
-AboutInit		; Returns with A:Y = max lines
+AboutInit		; Returns with A:Y = max lines, C = scrolling
 		jsr PRINT
 		asc _INVERSE,_MT_ON,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Scroll / "
 		asc _INVERSE,_MT_ON,_O_APPLE,_NORMAL,"-",_INVERSE,_U_ARROW,_D_ARROW,_MT_OFF,_NORMAL," Page"
@@ -453,6 +457,7 @@ AboutInit		; Returns with A:Y = max lines
 		asc " ",$00
 		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"A = This about page.",$00
 		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"B = Browse track buffer.",$00
+		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"C = Display buffer counts.",$00
 		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"F = Address field display.  " ; (cont)
 		asc "(Assuming 'good' address fields on disk.)",$00
 		asc _INVERSE,_MT_ON,_O_APPLE,_MT_OFF,_NORMAL,"G = Graphical disk display.",$00
@@ -506,6 +511,12 @@ AboutInit		; Returns with A:Y = max lines
 		asc "Scans an entire disk and graphically displays where sync ($FF) bytes appear on",$00
 		asc "disk.  Note that the length of each bar indicates how many sync bytes were in",$00
 		asc "that section of the disk.  Each bar represents approximately 46 bytes.",$00
+		asc " ",$00
+		asc "Display Buffer Counts",$00
+		asc "=====================",$00
+		asc " ",$00
+		asc "Count the number of disk bytes in the buffer and display totals.  This may be",$00
+		asc "helpful when trying to determine address field bytes.",$00
 		asc " ",$00
 		asc "-END-",$00
 		dfb 0
@@ -888,6 +899,92 @@ HgrHexFont		; Stolen from https://github.com/Michaelangel007/apple2_hgr_font_tut
 		hex 1E22222222221E00	; D
 		hex 3E02021E02023E00	; E
 		hex 3E02021E02020200	; F
+
+*
+* BUFFER COUNT interface
+*
+
+CountInit		; Returns with A:Y = max lines, C = scrolling
+		jsr PRINT
+		asc "(high bit must be set, only showing those bytes)"
+		dfb 0
+; Set inbuf to zero  (only counting $80, so $200-$2ff sufficient)
+		ldy #0
+		tya
+:erase	sta inbuf,y
+		iny
+		bne :erase
+; Start counting
+		jsr ReadTrack
+		jsr SETUPDATA
+		ldy #0
+:loop	lda (DATA),y
+		asl		; times 2, we don't care about highbit
+		tax
+		inc inbuf,x
+		bne :skip
+		inc inbuf+1,x
+:skip	iny
+		bne :loop
+		inc DATA+1
+		dec TEMP
+		bne :loop
+; Setup framework
+		lda #0	; No lines
+		tay
+		sec		; No scrolling
+		rts
+
+CountDisplay	; Called with A:Y = line
+		jsr PRINT
+		dfb $8D
+		dfb 14
+		asc " Low   +0   +1   +2   +3   +4   +5   +6   +7   High",$8D
+		dfb 19
+		asc " ==== ==== ==== ==== ==== ==== ==== ====",$8D
+		dfb 0
+		
+		ldy #$80
+:next	ldx #14
+		lda #" "
+:tab	jsr COUT
+		dex
+		bne :tab
+		tya
+		jsr PRHEX
+		lda #" "
+		jsr COUT
+		jsr COUT
+:line	lda #" "	; re-loading space due to loop construction
+		jsr COUT
+		tya
+		asl
+		tax
+		lda inbuf+1,x
+		jsr PRHEX
+		lda inbuf,x
+		jsr PRHEX
+		iny
+		tya
+		and #$07
+		bne :line
+		lda #" "
+		jsr COUT
+		jsr COUT
+		jsr COUT
+		jsr COUT
+		tya
+		dec
+		jsr PRHEX
+		jsr PRCR
+		cpy #0
+		bne :next
+		rts
+
+CountKeypress	; Called with Acc = key
+		; Do Nothing, continue loop
+		jmp KeyboardWait
+
 
 *
 * TEST interface
