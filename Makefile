@@ -2,6 +2,7 @@
 include local.config
 
 # Local stuff:
+SRC = afscanner.s diskii.s page-about.s page-browse.s page-count.s page-field.s page-graphics.s page-test.s page.s util.s 
 PGM = afscanner
 SYS = afscannr.system
 TYPE = SYS
@@ -10,7 +11,7 @@ TMPL = template.po
 DISK = afdisk.po
 
 
-afscanner: afscanner.s
+afscanner: $(SRC)
 	$(ASM) $(PGM).s
 	cp $(TMPL) $(DISK)
 	cat $(PGM) | $(AC) -p $(DISK) $(SYS) $(TYPE) $(ADDR)
