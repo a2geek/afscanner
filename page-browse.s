@@ -94,5 +94,5 @@ BrowseDisplay		; Called with Acc = line
 		jmp PRCR
 
 BrowseKeypress		; Called with Acc = key
-		jmp FieldKeypress	; identical to Field ... for now at least
+		jmp TrackNavigationKeys
 

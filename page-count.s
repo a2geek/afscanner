@@ -46,10 +46,10 @@ CountInit		; Returns with A:Y = max lines, C = scrolling
 
 CountDisplay	; Called with A:Y = line
 		jsr PRINT
-		dfb $8D
-		dfb 14
+		dfb _CLREOL,$8D
+		dfb 14	; repeat the next space 14x
 		asc " Low   +0   +1   +2   +3   +4   +5   +6   +7   High",$8D
-		dfb 19
+		dfb 19	; repeat the next space 19x
 		asc " ==== ==== ==== ==== ==== ==== ==== ====",$8D
 		dfb 0
 
@@ -148,7 +148,7 @@ CountKeypress	; Called with Acc = key
 		inx
 		cpx #4
 		bne :test
-		jmp KeyboardWait
+		jmp TrackNavigationKeys
 :keys	asc "-036"
 		
 :set	stx CountSettings

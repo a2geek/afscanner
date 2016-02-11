@@ -104,6 +104,8 @@ FieldDisplay		; Called with A:Y = line
 :groups	dfb 3,2,2,2,2,3
 
 FieldKeypress		; Called with Acc = key
+
+TrackNavigationKeys
 		ldx #-1
 		cmp #LARROW
 		beq :chgtrk

@@ -5,7 +5,6 @@
 *
 ******************************************************************************************
 
-
 SetupPage
 		jsr TEXT		; ensure we are out of graphics modes as application has some!
 		jsr PRINT		; position cursor on bottom line
@@ -15,7 +14,7 @@ SetupPage
 		dfb $00
 		ldx #_init		; vector offset
 		jsr _VCALL
-		ror scrolling	; set flag based on C
+		ror noscroll	; set flag based on C
 		sty maxlines
 		sta maxlines+1
 		stz topline
@@ -26,7 +25,7 @@ DrawPage
 		dfb _HOME,$8d,$8d,0
 		
 ; If we aren't scrolling, call _display vector ONCE and then handle keyboard.
-		bit scrolling
+		bit noscroll
 		bpl :scroll
 		lda #0
 		tay
@@ -34,6 +33,7 @@ DrawPage
 		jsr _VCALL
 		jmp KeyboardWait
 
+; We are scrolling, for each line, redraw it
 :scroll	lda #0
 :loop	pha
 		clc
@@ -47,7 +47,7 @@ DrawPage
 		lda printline
 		cmp maxlines
 		bge :erase
-	
+
 :drwlin	lda printline+1
 		ldy printline
 		ldx #_display
@@ -62,6 +62,7 @@ DrawPage
 		cmp #PAGELEN
 		blt :loop
 
+; Handle all keyboard interactions
 KeyboardWait
 		lda KEYBOARD
 		bpl KeyboardWait
@@ -73,53 +74,68 @@ KeyboardWait
 		and #$df		; uppercase mask
 :goodky	sta KEYCLEAR
 		bit OpenApple
-		bpl :normal
+		bpl :keys
 ; OpenApple handler
 		jsr SetScreen
-		bcs :paging
+		bcs :oakeys
 		jsr CLRSCRN
 		jmp SetupPage
+
+; Standard open-apple keys that are always available
+:oakeys	jsr HandleKey
+		MenuKey "Q";:Quit
+		MenuKey "*";:Mon
+		dfb 0
+
+; Open-Apple arrow keys only if scrolling is enabled
+		bit noscroll
+		bmi :local0
+		jsr HandleKey
+		MenuKey UpArrow;:PgUp
+		MenuKey DownArrow;:PgDn
+		dfb 0
+:local0	jmp :local
+
+; Normal key handler (only when scrolling)
+:keys	bit noscroll
+		bmi :local0
+		jsr HandleKey
+		MenuKey UpArrow;:Up
+		MenuKey DownArrow;:Down
+		dfb 0
+		jmp :local
+
 ; OA-Up
-:paging cmp #UpArrow
-		bne :nPgUp
-		ldy #15
+:PgUp	ldy #15
 :uploop	jsr :up1
 		dey
 		bne :uploop
 		beq :back		; always
+
 ; OA-Down
-:nPgUp	cmp #DownArrow
-		bne :chkOAQ
-		ldy #15
+:PgDn	ldy #15
 :dnloop	jsr :down1
 		dey
 		bne :dnloop
 		beq :back		; always
+
 ; OA-Q
-:chkOAQ	cmp #"Q"
-		bne :chkOA7
-		jsr PRODOSMLI
+:Quit	jsr PRODOSMLI
 		dfb _MLIQUIT
 		da QUITPARM
 :back	jmp DrawPage	; fall through and common return
 
 ; OA-*
-:chkOA7	cmp #"*"
-		bne :back
-		jsr PRINT
+:Mon	jsr PRINT
 		asc _CLS,"Press CTRL-Y to re-enter AFScanner.",$8D,$00
 		jmp MONITOR
 
-; Common keypress handler
 ; Up
-:normal	cmp #UpArrow
-		bne :notUp
-		jsr :up1
+:Up		jsr :up1
 		jmp DrawPage
+
 ; Down
-:notUp	cmp #DownArrow
-		bne :pgKey
-		jsr :down1
+:Down	jsr :down1
 		jmp DrawPage
 
 ; "Local" subroutines
@@ -156,12 +172,12 @@ KeyboardWait
 		sta topline+1
 :rts	rts
 
-:pgKey	ldx #_keypress
+:local	ldx #_keypress
 		; Fall through and JMP to _keypress which takes control for local page keys
 
 * Simple vector call from ZP based on X register
 
-_VCALL	jmp: ($00,x)		; Merlin32 needs to know 16 bit JMP
+_VCALL	jmp: ($00,x)		; Merlin32 needs to know 16 bit JMP, ":" does that
 
 * Handle screen change - both called by app init and normal keyboard handler
 

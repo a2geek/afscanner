@@ -144,3 +144,46 @@ QUITPARM       DFB   4			; 4 parameters
                DA    0			; reserved
                DFB   0			; reserved
                DA    0			; reserved
+
+; On entry:
+;   Acc = keypress
+;   Stack = address of table (format: key address key address 0)
+; Will not return if key found, a JMP will be performed.
+; If not found, return with carry set.
+HandleKey
+		sta TEMP
+		pla
+		sta PTR
+		pla
+		sta PTR+1
+		ldy #0
+:next
+		iny
+		lda (PTR),y
+		bpl :notFound
+		cmp TEMP
+		beq :jmp
+		iny
+		iny
+		bra :next
+; Jump to keypress handler
+:jmp	iny
+		lda (PTR),y
+		sta PTR2
+		iny
+		lda (PTR),y
+		sta PTR2+1
+		jmp (PTR2)
+; Not found - return to caller (Y + PTR = return address - 1)
+:notFound
+		clc
+		tya
+		adc PTR
+		tax
+		lda #0
+		adc PTR+1
+		pha
+		phx
+		lda TEMP
+		sec
+		rts
