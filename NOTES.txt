@@ -1,0 +1,43 @@
+Count:
+* Enable/disable hilights - data bytes, header bytes, non-zero invalid bytes
+
+Save/Load Settings?
+
+
+
+Memory map:
+$0000 - $00FF	ZP
+$0200 - $02FF	Input
+$0300 - $03FF	Settings?
+$0400 - $07FF   Text
+$0800 - $1FFF	Working buffer
+$2000 - $3FFF	HGR
+$4000 - $5FFF	Track buffer
+$6000+		Program
+
+
+
+Reserved - D5 AA
+
+13 sector - 32 bytes ("exact" mapping)
+16 sector - 64 bytes ("additional requirement" to get to 64 bytes)
+
+Fields:
+Address Field: D5 AA 96 ... DE AA EB
+Data Field: D5 AA AD ... DE AA EB
+
+
+Always:
+======
+OA Q = Quit
+OA * = Monitor
+OA A,B,C,F,G = Page navigation
+
+
+Decide per page:
+===============
+<-, ->, R, S = track management routine
+
+Controlled by page init: (embedded in display component)
+=======================
+^, v, OA ^, OA v = page navigation routine

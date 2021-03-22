@@ -43,6 +43,9 @@ FAILBYTS	   =	 6656		; Number of bytes before failure
 
 * 80 column card / print controls:
 
+HTAB			=	$57B		; set
+VTAB			=	$FB5B		; call with Acc.
+
 _PRBYTE		   =	 1			; print byte @ addr
 _CLS		   =	 $8C		; clear screen
 _INVERSE	   =	 $8F

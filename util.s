@@ -187,3 +187,123 @@ HandleKey
 		lda TEMP
 		sec
 		rts
+
+
+
+************************* Test Code **************************
+; Characters - assumption is a character unless % encountered
+;	%(byte < $80) = repeat next character
+;   %w = hex word
+;   %b = hex byte
+;   %% = %
+;   %i = inverse
+;   %n = normal
+;   %mC = C as mouse text (mouse text on, inverse, C, normal, mouse text off)
+;   %h# = HTAB, # is 0..79
+;   %v# = VTAB, # is 0..23
+;   %H = home cursor
+;   %C = clear screen and home cursor
+;   %E = clear to EOL
+;
+NewPrint
+		pla
+		sta PTR
+		pla
+		sta PTR+1
+		jsr IncPTR
+		jsr NewPrintX
+		jmp (PTR)
+
+NewPrintP
+		sta PTR+1
+		stx PTR
+
+NewPrintX
+:next	jsr FetchPTR
+		cmp #0		; Fetch loses the status bits
+		beq :exit
+		cmp #"%"
+		beq :specl
+:cout	jsr COUT
+		bra :next
+
+:exit	rts
+
+:specl	jsr FetchPTR
+		bpl :repeat
+		ldx :subcmd
+:look	cmp :subcmd,x
+		beq :dsptch
+		dex
+		bne :look
+		beq :dsptc0		; X=0 which is %% code as well
+
+:repeat	tax
+		jsr FetchPTR
+:rep0	jsr COUT
+		dex
+		bne :rep0
+		beq :next
+
+:dsptch	dex		; we're +1 because the lookup table is a STR (length byte at beginning)
+:dsptc0	txa
+		asl		; times 2
+		tax
+		jmp (:addrs,x)
+
+:chrout	asl		; requires these to be first in :subcmd
+		tax
+		lda :lookup,x
+		bra :cout
+
+:mtext	jsr FetchPTR
+		sta :mt_out+2
+		ldy #0
+:mtext0	lda :mt_out,y
+		jsr COUT
+		iny
+		cpy #5
+		bne :mtext0
+		bra :next
+
+:htab	jsr FetchPTR
+		sta HTAB
+		bra :next
+:vtab	jsr FetchPTR
+		jsr VTAB
+		bra :next
+:prbyte	jsr SetPTR2
+:lowb	lda (PTR2)
+		jsr PRHEX
+		bra :next
+:prword	jsr SetPTR2
+		ldy #1
+		lda (PTR2),y
+		jsr PRHEX
+		bra :lowb
+
+; data tables to make relative branches last longer
+:subcmd	str "%inHCEmhvbw"
+:addrs	lup 6	; 1st set are a character replacement
+		da :lookup
+		--^
+		da :mtext
+		da :htab
+		da :vtab
+		da :prbyte
+		da :prword
+:lookup	asc "%",_NORMAL,_INVERSE,_CLS,_HOME,_CLREOL
+:mt_out	dfb _MT_ON,_INVERSE,0,_NORMAL,_MT_OFF
+
+SetPTR2	jsr FetchPTR
+		sta PTR2
+		jsr FetchPTR
+		sta PTR2+1
+		rts
+
+FetchPTR
+		lda (PTR)
+IncPTR	inc PTR
+		bne :exit
+		inc PTR+1
+:exit	rts
